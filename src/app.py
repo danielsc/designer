@@ -38,22 +38,9 @@ def start_chat():
     
 
 def show_images(image):
-    # image is a dict of length 1
-    # key is the type of image, value is the base64 encoded image or file path, depending on the type
-
-    image_type = list(image.keys())[0]
-    image_content = list(image.values())[0]
-    if image_type.endswith(";base64"):
-        decoded_image = base64.b64decode(image_content)
-    elif image_type.endswith(";path"):
-        prompt_flow = cl.user_session.get("config")["active_promptflow"]
-        decoded_image = open(os.path.join(prompt_flow, image_content), "rb").read()
-    else:
-        raise Exception("Unknown image type: " + image_type)
-
     elements = [
         cl.Image(
-            content=decoded_image,
+            content=image,
             name="generated image",
             display="inline",
         )
