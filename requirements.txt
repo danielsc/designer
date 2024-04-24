@@ -16,3 +16,4 @@ ipython
 pandas 
 numpy
 pyautogen
+azure-monitor-opentelemetry-exporter --pre
