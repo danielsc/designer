@@ -61,6 +61,7 @@ def start_chat():
     cl.user_session.set("last_message_context", None)
 
     promptflows = [
+        os.path.join(os.path.dirname(__file__), 'data_analyst'),
         os.path.join(os.path.dirname(__file__), 'functions_flow'),
         os.path.join(os.path.dirname(__file__), 'autogen_flow')
     ]
@@ -96,12 +97,18 @@ async def call_promptflow(chat_history, message):
         # response = await run_conversation(chat_history=chat_history, 
         #                                 question=message.content)
 
+        span.set_attribute("inputs", json.dumps({"question": message.content}))
+        span.set_attribute("span_type", "function")
+        span.set_attribute("framework", "promptflow")
+        span.set_attribute("function", "call_promptflow")
 
         prompt_flow = cl.user_session.get("config")["active_promptflow"]
         client = PFClient()
         response = await cl.make_async(client.test)(prompt_flow, 
                                                       inputs={"chat_history": chat_history,
                                                               "question": message.content})
+        span.set_attribute("output", json.dumps(response))
+
     return response
 
 async def activate_promptflow(command: str, command_id: str):
@@ -152,33 +159,29 @@ async def run_conversation(message: cl.Message):
     elif question.startswith("/downvote"):
         await feedback("downvote")
     else:
-        tracer = trace.get_tracer(__name__) 
-        with tracer.start_as_current_span("call_promptflow") as span:
-            span.set_attribute("question", question)
-            response = await call_promptflow(chat_history, message)
-   
+        response = await call_promptflow(chat_history, message)
 
-            if "messages" in response:
-                for thing in response["messages"]:
-                    async with cl.Step(name=thing["role"]) as child_step:
-                        child_step.output = thing["content"]
 
-            if response["image"]:
-                elements = show_images(response["image"])
-            else:
-                elements = []  
+        if "messages" in response:
+            for thing in response["messages"]:
+                async with cl.Step(name=thing["role"]) as child_step:
+                    child_step.output = thing["content"]
 
-            await cl.Message(content=response["answer"], 
-                                author="Answer",
-                                elements=elements).send()
-            
-            chat_history.append({"inputs": {"question": message.content}, 
-                                "outputs": {"answer": response["answer"]}})
-            span.set_attribute("answer", response["answer"])
+        if response["image"]:
+            elements = show_images(response["image"])
+        else:
+            elements = []  
+
+        await cl.Message(content=response["answer"], 
+                            author="Answer",
+                            elements=elements).send()
+        
+        chat_history.append({"inputs": {"question": message.content}, 
+                            "outputs": {"answer": response["answer"]}})
 
 if __name__ == "__main__":
     start_trace()
-    # setup_app_insights()
+    setup_app_insights()
 
     print("using the follwoing chat_model", os.getenv("OPENAI_CHAT_MODEL"))
 
