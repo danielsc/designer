@@ -75,14 +75,39 @@ query to get the sum of number of orders, sum of order value, average order valu
 whenever you get an average, make sure to use the SUM of the values divided by the SUM of the counts to get the correct average. 
 The way the data is structured, you cannot use AVG() function in SQL. 
 
+        SUM(Sum_of_Order_Value)/SUM(Number_of_Orders) as Avg_Order_Value
 
-           SUM(Sum_of_Order_Value)/SUM(Number_of_Orders) as Avg_Order_Value
+When asked to list categories, days, or other entities, make sure to always query with DISTICT, for instance: 
+Query for all the values for the main_category
 
+    SELECT DISTINCT main_category
+    FROM order_data
+
+Query for all the days of the week in January where the number of orders is greater than 10
+
+    SELECT DISTINCT Day_of_Week
+    FROM order_data
+    WHERE Month = 1 AND Number_of_Orders > 10
+
+If you are aked for ratios, make sure to calculate the ratio by dividing the two values and multiplying by 1.0 to force a float division. 
+For instance, to get the return rate by month, you can use the following query:
+
+    SELECT SUM(Number_of_Orders_Returned) * 1.0 / SUM(Number_of_Orders)
+    FROM order_data
+        
+query for all the days in January 2023 where the number of orders is greater than 700
+
+    SELECT Day, SUM(Number_of_Orders) as Total_Orders
+    FROM order_data
+    WHERE Month = 1 AND Year = 2023
+    GROUP BY Day
+    HAVING SUM(Number_of_Orders) > 700
+    
 in your reply only provide the query with no extra formatting
 never use the AVG() function in SQL, always use SUM() / SUM() to get the average
                  """}]
     
-    messages.append({"role": "user", "content": question})
+    messages.append({"role": "user", "content": f"{question}\nGive only the query in SQL format"})
 
 
     response = await client.chat.completions.create(
@@ -94,8 +119,9 @@ never use the AVG() function in SQL, always use SUM() / SUM() to get the average
 
     query = message.content
 
-
-    con = sqlite3.connect('data/order_data.db')
+    ## get folder of this file -- below which is the data folder
+    folder = os.path.dirname(os.path.abspath(__file__))
+    con = sqlite3.connect(f'{folder}/data/order_data.db')
 
     try:
         df = pd.read_sql(query, con)
@@ -116,6 +142,8 @@ tools = [
             - which day of the week has the least sales in january
             - query the average value of orders by month
             - what is the average sale value for Tuesdays
+            If you are unsure of the data available, you can ask for a list of categories, days, etc.
+            - query for all the values for the main_category
             If a query cannot be answered, the tool will return a message saying that the query is not supported. otherwise the data will be returned.
             """,
             "parameters": {
@@ -133,7 +161,7 @@ tools = [
 ]
 
 @trace
-async def call_tool(tool_call, message_history):
+async def call_tool(tool_call, message_history, stream):
     available_functions = {
         "sales_data_insights": sales_data_insights
     }  # only one function in this example, but you can have multiple
@@ -141,6 +169,7 @@ async def call_tool(tool_call, message_history):
     function_name = tool_call.function.name
     function_to_call = available_functions[function_name]
     function_args = json.loads(tool_call.function.arguments)
+    await stream.send(f"calling tool {function_name} with args {function_args}\n")
     function_response = function_to_call(**function_args)
     if inspect.iscoroutinefunction(function_to_call):
         function_response = await function_response
@@ -155,7 +184,7 @@ async def call_tool(tool_call, message_history):
     )  # extend conversation with function response
 
 @trace
-async def call_llm(message_history):
+async def call_llm(message_history, stream):
     print("calling llm", message_history)
     settings = {
         "model": os.getenv("OPENAI_CHAT_MODEL"),
@@ -170,10 +199,12 @@ async def call_llm(message_history):
 
     message = response.choices[0].message
     message_history.append(message)
+    if message.content:
+        await stream.send(f"{message.content}\n\n---\n")
 
     for tool_call in message.tool_calls or []:
         if tool_call.type == "function":
-            await call_tool(tool_call, message_history)
+            await call_tool(tool_call, message_history, stream)
 
     return message_history
 
@@ -194,16 +225,6 @@ async def run_conversation(chat_history, question):
         api_version = os.getenv("OPENAI_API_VERSION")
     )
 
-    # messages = [{"role": "system", 
-    #              "content": """
-    #              You are a helpful assistant that helps the user with the help of some functions.
-    #              If you are using multiple tools to solve a user's task, make sure to communicate 
-    #              information learned from one tool to the next tool.
-    #              For instance, if the user ask to draw a picture of the current weather in NYC,
-    #              you can use the weather API to get the current weather in NYC and then pass that information
-    #              to the image generation tool.   
-    #              """}]
-
     messages = [{"role": "system", 
                  "content": """
                  You are a helpful assistant that helps the user potentially with the help of some functions.
@@ -220,6 +241,8 @@ async def run_conversation(chat_history, question):
                  Only use a tool when it is necessary to solve the user's task. 
                  Don't use a tool if you can answer the user's question directly.
                  Only use the tools provided in the tools list -- don't make up tools!!
+
+                 Anything that would benefit from a tabular presentation should be returned as markup table.
                  """}]
 
     for turn in chat_history:
@@ -228,39 +251,157 @@ async def run_conversation(chat_history, question):
     
     messages.append({"role": "user", "content": question})
     image = None
-    length_of_chat = len(messages)
 
-    cur_iter = 0
+    async def producer(stream, messages) -> None:
+        try:
+            length_of_chat = len(messages)
+            cur_iter = 0
+            while cur_iter < MAX_ITER:
+                messages = await call_llm(messages, stream)
+                message = messages[-1]
+                if get(message,'role')!="tool":
+                    return 
 
-    while cur_iter < MAX_ITER:
-        messages = await call_llm(messages)
-        message = messages[-1]
-        if get(message,'role')=="tool":
-            if get(message,'name')=="create_a_picture": 
-                image = Image(value=message['content'])
-                message['content'] = "Attached is the picture you asked for."
-        else:
-            answer = ""
-            for past_message in messages[length_of_chat:]:
-                if hasattr(past_message,"content") and past_message.content:
-                    answer += past_message.content + "\n\n---\n"
-
-            return dict(
-                answer=answer,
-                image=image
-            )
-
-        cur_iter += 1
+                cur_iter += 1
+            await stream.send("exceeded max iterations\n")
+        except Exception as e:
+            await stream.send(f"Error: {e}\n")
+        finally:
+            await stream.end()
+        return 
     
-    return dict(answer="exceeded max iterations", image=None)
+    stream = QueuedAsyncIteratorStream()
+    asyncio.create_task(producer(stream, messages))
+    return stream.aiter()
+
+
+## move to utils
+import asyncio
+from typing import Any, AsyncIterator, Dict, List, Literal, Union, cast
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+from opentelemetry import trace
+
+class QueuedAsyncIteratorStream:
+    terminate: str = "<--terminate-->"
+    queue: asyncio.Queue[str]
+    output: List[str]
+    context_carrier: Dict[str, Any]
+
+    def __init__(self) -> None:
+        self.queue = asyncio.Queue()
+        self.output = []
+        self.context_carrier = {}
+        # Write the current context into the carrier.
+        TraceContextTextMapPropagator().inject(self.context_carrier)
+
+
+    async def send(self, event: str) -> None:
+        if event is not None and event != "":
+            self.output.append(event)
+            self.queue.put_nowait(event)
+
+    async def end(self) -> None:
+        tracer = trace.get_tracer(__name__)
+        ctx = TraceContextTextMapPropagator().extract(carrier=self.context_carrier)
+
+        with tracer.start_as_current_span("stream", context=ctx) as span:
+            span.set_attribute("output", json.dumps(self.output))
+
+        self.queue.put_nowait(self.terminate)
+
+    async def aiter(self) -> AsyncIterator[str]:
+        while True:
+            # Wait for the next token in the queue,
+            # but stop waiting if the done event is set
+            token = await self.queue.get()
+
+            # Cancel the other task
+            if token == self.terminate:
+                break
+
+            # Otherwise, the extracted value is a token, which we yield
+            yield token
+
+async def main():
+    from promptflow.tracing import start_trace
+    start_trace()
+    chat_history = []
+    result = await run_conversation(chat_history,
+                                    "what are the sales numbers for feb by category")
+    
+    ## iterate over the stream
+    print("reading out the stream")
+    async for thing in result:
+        print("-"*80)
+        print(thing)
 
 
 if __name__ == "__main__":
-    from promptflow.tracing import start_trace
-    start_trace()
-    chat_history = [dict(inputs={"question": "What is the weather like in New York?"},
-                         outputs={"answer": "It is sunny in New York today."})]
+    asyncio.run(main())
 
-    result = asyncio.run(run_conversation(chat_history,
-                                          "Draw me a picture of the current weather in NYC?"))
-    print(result)
+
+
+class QueuedAsyncIteratorStreamSave:
+# TODO If used by two LLM runs in parallel this won't work as expected
+
+    queue: asyncio.Queue[str]
+    done: asyncio.Event
+    output: List[str]
+    context_carrier: Dict[str, Any]
+
+    def __init__(self) -> None:
+        self.queue = asyncio.Queue()
+        self.done = asyncio.Event()
+        self.output = []
+        self.context_carrier = {}
+        # Write the current context into the carrier.
+        TraceContextTextMapPropagator().inject(self.context_carrier)
+
+
+    async def send(self, event: str) -> None:
+        if event is not None and event != "":
+            self.output.append(event)
+            self.queue.put_nowait(event)
+
+    async def end(self) -> None:
+        tracer = trace.get_tracer(__name__)
+        ctx = TraceContextTextMapPropagator().extract(carrier=self.context_carrier)
+
+        with tracer.start_as_current_span("stream", context=ctx) as span:
+            span.set_attribute("output", json.dumps(self.output))
+
+        self.done.set()
+
+    async def aiter(self) -> AsyncIterator[str]:
+        while not self.queue.empty() or not self.done.is_set():
+            # Wait for the next token in the queue,
+            # but stop waiting if the done event is set
+            done, other = await asyncio.wait(
+                [
+                    # NOTE: If you add other tasks here, update the code below,
+                    # which assumes each set has exactly one task each
+                    asyncio.ensure_future(self.queue.get()),
+                    asyncio.ensure_future(self.done.wait()),
+                ],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            # Cancel the other task
+            if other:
+                other.pop().cancel()
+
+            # Extract the value of the first completed task
+            token_or_done = cast(Union[str, Literal[True]], done.pop().result())
+
+            # If the extracted value is the boolean True, the done event was set
+            if token_or_done is True:
+                break
+
+            # Otherwise, the extracted value is a token, which we yield
+            yield token_or_done
+        
+        # if there is still a token in the queue, we need to yield it
+        while not self.queue.empty():
+            yield self.queue.get_nowait() 
+        
+        await asyncio.sleep(0.1)

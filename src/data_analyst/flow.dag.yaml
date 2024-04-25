@@ -13,11 +13,8 @@ inputs:
 outputs:
   answer:
     type: string
-    reference: ${functions.output.answer}
+    reference: ${functions.output}
     is_chat_output: true
-  image:
-    type: object
-    reference: ${functions.output.image}
 nodes:
 - name: functions
   type: python

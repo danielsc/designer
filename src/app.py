@@ -102,12 +102,19 @@ async def call_promptflow(chat_history, message):
         span.set_attribute("framework", "promptflow")
         span.set_attribute("function", "call_promptflow")
 
-        prompt_flow = cl.user_session.get("config")["active_promptflow"]
-        client = PFClient()
-        response = await cl.make_async(client.test)(prompt_flow, 
-                                                      inputs={"chat_history": chat_history,
-                                                              "question": message.content})
-        span.set_attribute("output", json.dumps(response))
+        # prompt_flow = cl.user_session.get("config")["active_promptflow"]
+        # client = PFClient()
+        # response = await cl.make_async(client.test)(prompt_flow, 
+        #                                               inputs={"chat_history": chat_history,
+        #                                                       "question": message.content})
+        from data_analyst.functions_flow import run_conversation
+        response = await run_conversation(chat_history=chat_history, 
+                                           question=message.content)
+
+        try:            
+            span.set_attribute("output", json.dumps(response))
+        except Exception as e:
+            span.set_attribute("output", str(e))
 
     return response
 
@@ -159,25 +166,33 @@ async def run_conversation(message: cl.Message):
     elif question.startswith("/downvote"):
         await feedback("downvote")
     else:
-        response = await call_promptflow(chat_history, message)
 
+        msg = cl.Message(content="")
+        await msg.send()
 
-        if "messages" in response:
-            for thing in response["messages"]:
-                async with cl.Step(name=thing["role"]) as child_step:
-                    child_step.output = thing["content"]
+        stream = await call_promptflow(chat_history, message)
+        response = ""
+        async for thing in stream:
+            response += thing
+            await msg.stream_token(thing)
+        await msg.stream_token("🏁")
 
-        if response["image"]:
-            elements = show_images(response["image"])
-        else:
-            elements = []  
+        # if "messages" in response:
+        #     for thing in response["messages"]:
+        #         async with cl.Step(name=thing["role"]) as child_step:
+        #             child_step.output = thing["content"]
 
-        await cl.Message(content=response["answer"], 
-                            author="Answer",
-                            elements=elements).send()
+        # if response["image"]:
+        #     elements = show_images(response["image"])
+        # else:
+        #     elements = []  
+
+        # await cl.Message(content=response["answer"], 
+        #                     author="Answer",
+        #                     elements=elements).send()
         
         chat_history.append({"inputs": {"question": message.content}, 
-                            "outputs": {"answer": response["answer"]}})
+                            "outputs": {"answer": response}})
 
 if __name__ == "__main__":
     start_trace()
