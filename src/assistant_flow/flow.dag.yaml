@@ -1,0 +1,57 @@
+# id: steelthread_demo_pf_with_assistants
+# name: SteelThread Demo PF with Assistants
+inputs:
+  chat_history:
+    type: list
+    default: []
+    is_chat_history: true
+  chat_input:
+    type: string
+    default: get the sales revenue by month for the last year and plot it in a line chart using matplotlib. Make use to use the month names in the plot.
+    is_chat_input: true
+  session_state:
+    type: object
+    default: {}
+outputs:
+  chat_output:
+    type: string
+    reference: ${format_planner_output.output.chat_output}
+    is_chat_output: true
+  session_state:
+    type: object
+    reference: ${format_planner_output.output.session_state}
+    is_chat_output: false
+  planner_raw_output:
+    type: string
+    reference: ${planner.output}
+    is_chat_output: false
+nodes:
+- name: format_pf_inputs_as_chat_completion
+  type: python
+  source:
+    type: code
+    path: pf_format_pf_inputs_as_chat_completion.py
+  inputs:
+    chat_history: ${inputs.chat_history}
+    chat_input: ${inputs.chat_input}
+  use_variants: false
+- name: planner
+  type: python
+  source:
+    type: code
+    path: pf_planner.py
+  inputs:
+    messages: ${format_pf_inputs_as_chat_completion.output}
+    session_state: ${inputs.session_state}
+  use_variants: false
+- name: format_planner_output
+  type: python
+  source:
+    type: code
+    path: pf_format_planner_output.py
+  inputs:
+    planner_output: ${planner.output}
+  use_variants: false
+node_variants: {}
+environment:
+  python_requirements_txt: requirements.txt

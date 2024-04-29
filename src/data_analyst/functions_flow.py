@@ -17,22 +17,7 @@ global client
 
 import json
 
-@trace
-async def sales_data_insights(question):
-    """
-    get some data insights about the contoso sales data. This tool has information about total sales, return return rates, discounts given, etc., by date, product category, etc.
-    you can ask questions like:
-    - query for the month with the strongest revenue
-    - which day of the week has the least sales in january
-    - query the average value of orders by month
-    - what is the average sale value for Tuesdays
-    If a query cannot be answered, the tool will return a message saying that the query is not supported. otherwise the data will be returned.
-    """
-    print("getting sales data insights")
-    print("question", question)
-
-    messages = [{"role": "system", 
-                 "content": """
+system_message = """
 ### SQLite table with properties:
     #
     #  Number_of_Orders INTEGER "the number of orders processed"
@@ -102,13 +87,31 @@ query for all the days in January 2023 where the number of orders is greater tha
     WHERE Month = 1 AND Year = 2023
     GROUP BY Day
     HAVING SUM(Number_of_Orders) > 700
-    
+
 in your reply only provide the query with no extra formatting
 never use the AVG() function in SQL, always use SUM() / SUM() to get the average
-                 """}]
+                 """
+
+
+
+@trace
+async def sales_data_insights(question):
+    """
+    get some data insights about the contoso sales data. This tool has information about total sales, return return rates, discounts given, etc., by date, product category, etc.
+    you can ask questions like:
+    - query for the month with the strongest revenue
+    - which day of the week has the least sales in january
+    - query the average value of orders by month
+    - what is the average sale value for Tuesdays
+    If a query cannot be answered, the tool will return a message saying that the query is not supported. otherwise the data will be returned.
+    """
+    print("getting sales data insights")
+    print("question", question)
+
+    messages = [{"role": "system", 
+                 "content": system_message}]
     
     messages.append({"role": "user", "content": f"{question}\nGive only the query in SQL format"})
-
 
     response = await client.chat.completions.create(
         model= os.getenv("OPENAI_CHAT_MODEL"),
@@ -227,22 +230,22 @@ async def run_conversation(chat_history, question):
 
     messages = [{"role": "system", 
                  "content": """
-                 You are a helpful assistant that helps the user potentially with the help of some functions.
-                 
-                 If you are using multiple tools to solve a user's task, make sure to communicate 
-                 information learned from one tool to the next tool.
-                 First, make a plan of how you will use the tools to solve the user's task and communicated
-                 that plan to the user with the first response. Then execute the plan making sure to communicate
-                 the required information between tools since tools only see the information passed to them;
-                 They do not have access to the chat history.
-                 If you think that tool use can be parallelized (e.g. to get weather data for multiple cities) 
-                 make sure to use the multi_tool_use.parallel function to execute.
+                You are a helpful assistant that helps the user potentially with the help of some functions.
 
-                 Only use a tool when it is necessary to solve the user's task. 
-                 Don't use a tool if you can answer the user's question directly.
-                 Only use the tools provided in the tools list -- don't make up tools!!
+                If you are using multiple tools to solve a user's task, make sure to communicate 
+                information learned from one tool to the next tool.
+                First, make a plan of how you will use the tools to solve the user's task and communicated
+                that plan to the user with the first response. Then execute the plan making sure to communicate
+                the required information between tools since tools only see the information passed to them;
+                They do not have access to the chat history.
+                If you think that tool use can be parallelized (e.g. to get weather data for multiple cities) 
+                make sure to use the multi_tool_use.parallel function to execute.
 
-                 Anything that would benefit from a tabular presentation should be returned as markup table.
+                Only use a tool when it is necessary to solve the user's task. 
+                Don't use a tool if you can answer the user's question directly.
+                Only use the tools provided in the tools list -- don't make up tools!!
+
+                Anything that would benefit from a tabular presentation should be returned as markup table.
                  """}]
 
     for turn in chat_history:
@@ -341,67 +344,3 @@ if __name__ == "__main__":
 
 
 
-class QueuedAsyncIteratorStreamSave:
-# TODO If used by two LLM runs in parallel this won't work as expected
-
-    queue: asyncio.Queue[str]
-    done: asyncio.Event
-    output: List[str]
-    context_carrier: Dict[str, Any]
-
-    def __init__(self) -> None:
-        self.queue = asyncio.Queue()
-        self.done = asyncio.Event()
-        self.output = []
-        self.context_carrier = {}
-        # Write the current context into the carrier.
-        TraceContextTextMapPropagator().inject(self.context_carrier)
-
-
-    async def send(self, event: str) -> None:
-        if event is not None and event != "":
-            self.output.append(event)
-            self.queue.put_nowait(event)
-
-    async def end(self) -> None:
-        tracer = trace.get_tracer(__name__)
-        ctx = TraceContextTextMapPropagator().extract(carrier=self.context_carrier)
-
-        with tracer.start_as_current_span("stream", context=ctx) as span:
-            span.set_attribute("output", json.dumps(self.output))
-
-        self.done.set()
-
-    async def aiter(self) -> AsyncIterator[str]:
-        while not self.queue.empty() or not self.done.is_set():
-            # Wait for the next token in the queue,
-            # but stop waiting if the done event is set
-            done, other = await asyncio.wait(
-                [
-                    # NOTE: If you add other tasks here, update the code below,
-                    # which assumes each set has exactly one task each
-                    asyncio.ensure_future(self.queue.get()),
-                    asyncio.ensure_future(self.done.wait()),
-                ],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            # Cancel the other task
-            if other:
-                other.pop().cancel()
-
-            # Extract the value of the first completed task
-            token_or_done = cast(Union[str, Literal[True]], done.pop().result())
-
-            # If the extracted value is the boolean True, the done event was set
-            if token_or_done is True:
-                break
-
-            # Otherwise, the extracted value is a token, which we yield
-            yield token_or_done
-        
-        # if there is still a token in the queue, we need to yield it
-        while not self.queue.empty():
-            yield self.queue.get_nowait() 
-        
-        await asyncio.sleep(0.1)
