@@ -44,27 +44,26 @@ class AssistantsAPIGlue:
 
         if "thread_id" in session_state:
             logging.info(f"Using thread_id from session_stat: {session_state['thread_id']}")
-            with tracer.start_as_current_span("threads.retrieve") as span:
-                span.set_attribute("inputs", json.dumps(dict(thread_id=session_state['thread_id'])))
-                self.thread_id = self.client.beta.threads.retrieve(session_state['thread_id']).id
+            otel_trace.get_current_span().set_attribute("thread_id",  session_state['thread_id'])
+            self.thread_id = self.client.beta.threads.retrieve(session_state['thread_id']).id
         else:
             logging.info(f"Creating a new thread")
-            with tracer.start_as_current_span("threads.create") as span:
-                self.thread_id = self.client.beta.threads.create().id
-                span.set_attribute("output", self.thread_id)
+            self.thread_id = self.client.beta.threads.create().id
+            otel_trace.get_current_span().set_attribute("thread_id", self.thread_id)
 
         # Add last message in the thread
         logging.info("Adding last message in the thread")
-        with tracer.start_as_current_span("messages.create") as span:
-            inputs = dict(thread_id=self.thread_id, role=messages[-1]["role"], content=messages[-1]["content"])
-            span.set_attribute("inputs", json.dumps(inputs))
+        self.add_message(messages[-1])
+        # with tracer.start_as_current_span("messages.create") as span:
+        #     inputs = dict(thread_id=self.thread_id, role=messages[-1]["role"], content=messages[-1]["content"])
+        #     span.set_attribute("inputs", json.dumps(inputs))
                                
-            message = self.client.beta.threads.messages.create(
-                thread_id=self.thread_id,
-                role=messages[-1]["role"],
-                content=messages[-1]["content"],
-            )
-            span.set_attribute("output", message.model_dump_json())
+        #     message = self.client.beta.threads.messages.create(
+        #         thread_id=self.thread_id,
+        #         role=messages[-1]["role"],
+        #         content=messages[-1]["content"],
+        #     )
+        #     span.set_attribute("output", message.model_dump_json())
 
         # # Add conversation history in the thread
         # logging.info("Adding conversation history in the thread")
@@ -88,6 +87,14 @@ class AssistantsAPIGlue:
             )
         # get current span
         otel_trace.get_current_span().set_attribute("assistant_id", self.assistant_id)
+
+    @trace
+    def add_message(self, message):
+        _ = self.client.beta.threads.messages.create(
+            thread_id=self.thread_id,
+            role=message["role"],
+            content=message["content"],
+        )
 
     @trace
     def run(self, messages=None):

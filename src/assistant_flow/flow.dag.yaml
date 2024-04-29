@@ -7,7 +7,7 @@ inputs:
     is_chat_history: true
   chat_input:
     type: string
-    default: get the sales revenue by month for the last year and plot it in a line chart using matplotlib. Make use to use the month names in the plot.
+    default: get the order numbers by month for the last year and plot it in a line chart using matplotlib. Make use to use the month names in the plot.
     is_chat_input: true
   session_state:
     type: object

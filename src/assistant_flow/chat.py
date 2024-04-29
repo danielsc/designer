@@ -161,7 +161,12 @@ def chat_completion(
     )
 
     if messages:
-        handler = AssistantsAPIGlue(client, messages, stream, session_state, context, dict(sales_data_insights=sales_data_insights))
+        handler = AssistantsAPIGlue(client=client, 
+                                    messages=messages, 
+                                    stream=stream, 
+                                    session_state=session_state, 
+                                    context=context, 
+                                    tools=dict(sales_data_insights=sales_data_insights))
         return handler.run()
     else:
         # TODO: figure out what to return then
@@ -175,8 +180,8 @@ def _test():
         messages=[
             {
                 "role": "user",
-                "content": "what is e to the power of 942349?",
-                # "content": "Plot the order numbers and USD revenue for 2023 by month in a bar chart?",
+                # "content": "what is e to the power of 942349?",
+                "content": "Plot the order numbers and USD revenue for 2023 by month in a bar chart?",
             }
         ],
     )
