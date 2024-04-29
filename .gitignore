@@ -5,3 +5,4 @@ src/__pycache__/
 src/autogen_flow/.cache/41/cache.db
 src/autogen_flow/.promptflow/flow.log
 src/autogen_flow/__pycache__/
+spans.json
