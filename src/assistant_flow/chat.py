@@ -132,8 +132,7 @@ def sales_data_insights(question):
 
 @trace
 def chat_completion(
-    messages: list[dict],
-    stream: bool = False,
+    question: str,
     session_state: dict = {},
     context: dict[str, any] = {},
 ):
@@ -160,36 +159,21 @@ def chat_completion(
         api_version=os.getenv("OPENAI_API_VERSION"),
     )
 
-    if messages:
-        handler = AssistantsAPIGlue(client=client, 
-                                    messages=messages, 
-                                    stream=stream, 
-                                    session_state=session_state, 
-                                    context=context, 
-                                    tools=dict(sales_data_insights=sales_data_insights))
-        return handler.run()
-    else:
-        # TODO: figure out what to return then
-        return {"error": "No messages provided."}
-
+    handler = AssistantsAPIGlue(client=client, 
+                                question=question, 
+                                session_state=session_state, 
+                                context=context, 
+                                tools=dict(sales_data_insights=sales_data_insights))
+    return handler.run()
 
 def _test():
     """Test the chat completion function."""
     # try a functions combo (without RAG)
     response = chat_completion(
-        messages=[
-            {
-                "role": "user",
-                # "content": "what is e to the power of 942349?",
-                "content": "Plot the order numbers and USD revenue for 2023 by month in a bar chart?",
-            }
-        ],
+        question= "Plot the order numbers and USD revenue for 2023 by month in a bar chart?"
     )
 
-    # test expected format
-    from openai.types.chat import ChatCompletion
-
-    print(ChatCompletion.model_validate(response))
+    return response
 
 
 if __name__ == "__main__":
@@ -205,6 +189,7 @@ if __name__ == "__main__":
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
     )
+    parser.add_argument("--output", help="Output file", default="output.log")
     args = parser.parse_args()
 
     # turn on logging
@@ -218,4 +203,14 @@ if __name__ == "__main__":
 
     start_trace()
 
-    _test()
+    # write tokens to output file
+    with open(args.output, "w") as f:
+        for token in _test()["chat_output"]:
+            # write token to stream and flush
+            f.write(str(token))
+            f.write("\n")
+            f.flush()
+            
+
+
+    

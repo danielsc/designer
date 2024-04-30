@@ -1,4 +1,4 @@
-from promptflow import tool
+from promptflow.core import tool
 from promptflow.connections import AzureOpenAIConnection
 from typing import List
 import os
@@ -8,7 +8,7 @@ from chat import chat_completion
 
 @tool
 def planner(
-    messages: List,
+    question: str,
     session_state: dict = {}
 ) -> str:
     # transforming pf connection into env vars for chat_completion
@@ -17,5 +17,5 @@ def planner(
     # os.environ["OPENAI_ASSISTANT_ID"] = planner_assistant_id
 
     # just running the chat_completion function
-    return chat_completion(messages=messages,
+    return chat_completion(question=question,
                            session_state=session_state)
